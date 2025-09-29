@@ -4,6 +4,7 @@ pub const Config = struct {
     show_timestamp: bool,
     visible_lines: usize,
     raw_output: bool,
+    dim_inactive: bool,
     player: []u8,
 
     pub fn deinit(self: Config, allocator: std.mem.Allocator) void {
@@ -18,6 +19,7 @@ pub fn parse(allocator: std.mem.Allocator) !Config {
     var show_timestamp = false;
     var visible_lines: usize = 3;
     var raw_output = false;
+    var dim_inactive = false;
     var player_override: ?[]u8 = null;
     errdefer if (player_override) |p| allocator.free(p);
 
@@ -61,6 +63,9 @@ pub fn parse(allocator: std.mem.Allocator) !Config {
         } else if (std.mem.eql(u8, arg, "--raw")) {
             raw_output = true;
             i += 1;
+        } else if (std.mem.eql(u8, arg, "--dim")) {
+            dim_inactive = true;
+            i += 1;
         } else if (std.mem.eql(u8, arg, "--help")) {
             usage();
             std.process.exit(0);
@@ -92,6 +97,7 @@ pub fn parse(allocator: std.mem.Allocator) !Config {
         .show_timestamp = show_timestamp,
         .visible_lines = visible_lines,
         .raw_output = raw_output,
+        .dim_inactive = dim_inactive,
         .player = player_buf,
     };
 }
@@ -105,6 +111,7 @@ pub fn usage() void {
             "  --player NAME  Select playerctl -p target (default env LRC_TTY_PLAYER or playerctld).\n" ++
             "  --lines NUM    Display NUM lyric rows (default 3).\n" ++
             "  --raw          Print the current lyric line and exit.\n" ++
+            "  --dim          Dim non-focused lines in the TUI.\n" ++
             "  -h, --help     Show this help text.\n",
         .{},
     );

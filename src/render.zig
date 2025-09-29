@@ -16,6 +16,7 @@ const RenderSlot = struct {
 pub const RenderState = struct {
     allocator: std.mem.Allocator,
     show_timestamp: bool,
+    dim_inactive: bool,
     visible_lines: usize,
     initialized: bool,
     last_rows: u16,
@@ -23,12 +24,13 @@ pub const RenderState = struct {
     last_start_row: usize,
     slots: []RenderSlot,
 
-    pub fn init(allocator: std.mem.Allocator, show_timestamp: bool, visible_lines: usize) !RenderState {
+    pub fn init(allocator: std.mem.Allocator, show_timestamp: bool, dim_inactive: bool, visible_lines: usize) !RenderState {
         const slots = try allocator.alloc(RenderSlot, visible_lines);
         for (slots) |*slot| slot.* = RenderSlot{ .present = false, .text_ptr = 0, .t = 0, .highlight = false };
         return RenderState{
             .allocator = allocator,
             .show_timestamp = show_timestamp,
+            .dim_inactive = dim_inactive,
             .visible_lines = visible_lines,
             .initialized = false,
             .last_rows = 0,
@@ -102,7 +104,7 @@ pub const RenderState = struct {
                 highlight = line_index == idx;
             }
             if (slotNeedsUpdate(slot.*, line_opt, highlight)) {
-                printCenteredLine(start_row + i, line_opt, highlight, col_count, self.show_timestamp);
+                printCenteredLine(start_row + i, line_opt, highlight, col_count, self.show_timestamp, self.dim_inactive);
                 rememberSlot(slot, line_opt, highlight);
             }
         }
@@ -167,7 +169,7 @@ fn nearestIndex(lines: []const lyrics.Line, t: f64) usize {
     return lo;
 }
 
-fn printCenteredLine(row: usize, line_opt: ?lyrics.Line, highlight: bool, cols: usize, show_timestamp: bool) void {
+fn printCenteredLine(row: usize, line_opt: ?lyrics.Line, highlight: bool, cols: usize, show_timestamp: bool, dim_inactive: bool) void {
     std.debug.print("\x1b[{d};1H", .{row});
 
     if (line_opt) |ln| {
@@ -192,6 +194,8 @@ fn printCenteredLine(row: usize, line_opt: ?lyrics.Line, highlight: bool, cols: 
 
         if (highlight) {
             std.debug.print("\x1b[7m{s}\x1b[0m", .{segment});
+        } else if (dim_inactive) {
+            std.debug.print("\x1b[2m{s}\x1b[0m", .{segment});
         } else {
             std.debug.print("{s}", .{segment});
         }

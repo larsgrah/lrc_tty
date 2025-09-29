@@ -55,7 +55,7 @@ pub fn main() !void {
         alloc.free(album);
     }
 
-    var renderer = try render.RenderState.init(alloc, cfg.show_timestamp, cfg.visible_lines);
+    var renderer = try render.RenderState.init(alloc, cfg.show_timestamp, cfg.dim_inactive, cfg.visible_lines);
     defer renderer.deinit();
     renderer.reset();
 
