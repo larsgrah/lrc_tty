@@ -60,7 +60,7 @@ fn ensureConnection() !*c.DBusConnection {
 }
 
 fn ensurePropertiesMatch(player: []const u8) !*c.DBusConnection {
-    var trimmed = std.mem.trim(u8, player, " ");
+    const trimmed = std.mem.trim(u8, player, " ");
     if (trimmed.len == 0) return error.InvalidPlayerName;
 
     const conn = try ensureConnection();
