@@ -10,6 +10,98 @@ pub const FetchResult = struct {
     src: []const u8,
 };
 
+const SearchSelection = struct {
+    lrc: []const u8,
+    is_synced: bool,
+    score: f64,
+};
+
+fn selectBestSearchResult(
+    arr: std.json.Array,
+    artist: []const u8,
+    title: []const u8,
+    length: f64,
+) ?SearchSelection {
+    var best_score: f64 = -1e9;
+    var best_lrc: ?[]const u8 = null;
+    var best_is_synced = false;
+
+    for (arr.items) |item| {
+        const obj = switch (item) {
+            .object => |o| o,
+            else => continue,
+        };
+
+        var lrc_txt: ?[]const u8 = null;
+        var is_synced = false;
+        if (obj.get("syncedLyrics")) |synp| {
+            switch (synp) {
+                .string => |s| {
+                    lrc_txt = s;
+                    is_synced = true;
+                },
+                else => {},
+            }
+        }
+        if (lrc_txt == null) {
+            if (obj.get("plainLyrics")) |plp| {
+                switch (plp) {
+                    .string => |s| {
+                        lrc_txt = s;
+                    },
+                    else => {},
+                }
+            }
+        }
+        if (lrc_txt == null) continue;
+
+        var score: f64 = 0;
+        var dur: f64 = 0;
+
+        if (obj.get("duration")) |dp| {
+            switch (dp) {
+                .float => |f| dur = f,
+                .integer => |i| dur = @floatFromInt(i),
+                else => {},
+            }
+        }
+        score -= @abs(dur - length);
+
+        if (obj.get("artistName")) |ap| {
+            switch (ap) {
+                .string => |s| {
+                    if (std.ascii.eqlIgnoreCase(s, artist)) score += 5;
+                },
+                else => {},
+            }
+        }
+        if (obj.get("trackName")) |tp| {
+            switch (tp) {
+                .string => |s| {
+                    if (std.ascii.eqlIgnoreCase(s, title)) score += 5;
+                },
+                else => {},
+            }
+        }
+
+        const should_replace = best_lrc == null
+            or (is_synced and !best_is_synced)
+            or (is_synced == best_is_synced and score > best_score);
+
+        if (should_replace) {
+            best_score = score;
+            best_lrc = lrc_txt;
+            best_is_synced = is_synced;
+        }
+    }
+
+    if (best_lrc) |l| {
+        return SearchSelection{ .lrc = l, .is_synced = best_is_synced, .score = best_score };
+    }
+
+    return null;
+}
+
 fn httpGetAlloc(allocator: std.mem.Allocator, url: []const u8, timeout_ms: u64) ![]u8 {
     _ = timeout_ms; // TODO: plumb through zig std http client timeouts once available
 
@@ -93,73 +185,8 @@ pub fn fetchLrclib(
         defer if (parsed) |p| p.deinit();
         if (parsed) |p| switch (p.value) {
             .array => |arr| {
-                var best_score: f64 = -1e9;
-                var best_lrc: ?[]const u8 = null;
-
-                for (arr.items) |item| {
-                    const obj = switch (item) {
-                        .object => |o| o,
-                        else => continue,
-                    };
-
-                    var lrc_txt: ?[]const u8 = null;
-                    if (obj.get("syncedLyrics")) |synp| {
-                        switch (synp) {
-                            .string => |s| {
-                                lrc_txt = s;
-                            },
-                            else => {},
-                        }
-                    }
-                    if (lrc_txt == null) {
-                        if (obj.get("plainLyrics")) |plp| {
-                            switch (plp) {
-                                .string => |s| {
-                                    lrc_txt = s;
-                                },
-                                else => {},
-                            }
-                        }
-                    }
-                    if (lrc_txt == null) continue;
-
-                    var score: f64 = 0;
-                    var dur: f64 = 0;
-
-                    if (obj.get("duration")) |dp| {
-                        switch (dp) {
-                            .float => |f| dur = f,
-                            .integer => |i| dur = @floatFromInt(i),
-                            else => {},
-                        }
-                    }
-                    score -= @abs(dur - length);
-
-                    if (obj.get("artistName")) |ap| {
-                        switch (ap) {
-                            .string => |s| {
-                                if (std.ascii.eqlIgnoreCase(s, artist)) score += 5;
-                            },
-                            else => {},
-                        }
-                    }
-                    if (obj.get("trackName")) |tp| {
-                        switch (tp) {
-                            .string => |s| {
-                                if (std.ascii.eqlIgnoreCase(s, title)) score += 5;
-                            },
-                            else => {},
-                        }
-                    }
-
-                    if (score > best_score) {
-                        best_score = score;
-                        best_lrc = lrc_txt;
-                    }
-                }
-
-                if (best_lrc) |l| {
-                    return FetchResult{ .lrc = allocator.dupe(u8, l) catch return null, .src = "lrclib:search" };
+                if (selectBestSearchResult(arr, artist, title, length)) |best| {
+                    return FetchResult{ .lrc = allocator.dupe(u8, best.lrc) catch return null, .src = "lrclib:search" };
                 }
             },
             else => {},
@@ -236,6 +263,68 @@ pub fn parseLrc(allocator: std.mem.Allocator, text: []const u8) ![]Line {
     }.lessThan);
 
     return lines.toOwnedSlice();
+}
+
+test "lrclib search prefers synced lyrics" {
+    const allocator = std.testing.allocator;
+    const json_text = "\n" ++
+        "[\n" ++
+        "  {\n" ++
+        "    \"plainLyrics\": \"plain\",\n" ++
+        "    \"duration\": 120,\n" ++
+        "    \"artistName\": \"Artist\",\n" ++
+        "    \"trackName\": \"Song\"\n" ++
+        "  },\n" ++
+        "  {\n" ++
+        "    \"syncedLyrics\": \"[00:01.00]synced\",\n" ++
+        "    \"duration\": 130,\n" ++
+        "    \"artistName\": \"Different Artist\",\n" ++
+        "    \"trackName\": \"Different Song\"\n" ++
+        "  }\n" ++
+        "]\n";
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_text, .{});
+    defer parsed.deinit();
+
+    const arr = switch (parsed.value) {
+        .array => |a| a,
+        else => unreachable,
+    };
+
+    const maybe_best = selectBestSearchResult(arr, "Artist", "Song", 120.0);
+    try std.testing.expect(maybe_best != null);
+    const best = maybe_best.?;
+
+    try std.testing.expect(best.is_synced);
+    try std.testing.expectEqualStrings("[00:01.00]synced", best.lrc);
+}
+
+test "lrclib search falls back to plain lyrics when no synced result" {
+    const allocator = std.testing.allocator;
+    const json_text = "\n" ++
+        "[\n" ++
+        "  {\n" ++
+        "    \"plainLyrics\": \"plain\",\n" ++
+        "    \"duration\": 118,\n" ++
+        "    \"artistName\": \"Artist\",\n" ++
+        "    \"trackName\": \"Song\"\n" ++
+        "  }\n" ++
+        "]\n";
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_text, .{});
+    defer parsed.deinit();
+
+    const arr = switch (parsed.value) {
+        .array => |a| a,
+        else => unreachable,
+    };
+
+    const maybe_best = selectBestSearchResult(arr, "Artist", "Song", 120.0);
+    try std.testing.expect(maybe_best != null);
+    const best = maybe_best.?;
+
+    try std.testing.expect(!best.is_synced);
+    try std.testing.expectEqualStrings("plain", best.lrc);
 }
 
 pub fn synthTimeline(allocator: std.mem.Allocator, text: []const u8) ![]Line {
