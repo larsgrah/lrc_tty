@@ -108,28 +108,37 @@ fn httpGetAlloc(allocator: std.mem.Allocator, url: []const u8, timeout_ms: u64) 
     var client = std.http.Client{ .allocator = allocator };
     defer client.deinit();
 
-    var body = std.ArrayList(u8).init(allocator);
-    errdefer body.deinit();
+    var writer = std.Io.Writer.Allocating.init(allocator);
+    defer writer.deinit();
 
     const result = try client.fetch(.{
         .location = .{ .url = url },
-        .response_storage = .{ .dynamic = &body },
-        .max_append_size = 1 << 20,
+        .response_writer = &writer.writer,
     });
 
     if (result.status != .ok) return error.BadStatus;
 
-    return body.toOwnedSlice();
+    const max_response = 1 << 20;
+    if (writer.written().len > max_response) return error.StreamTooLong;
+
+    return try writer.toOwnedSlice();
 }
 
 fn urlEncode(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
-    var out = std.ArrayList(u8).init(allocator);
-    defer out.deinit();
+    var out = std.ArrayList(u8){};
+    defer out.deinit(allocator);
     for (s) |c| {
-        const is_safe = std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == '~';
-        if (is_safe) try out.append(c) else try out.writer().print("%{X:0>2}", .{@as(u8, c)});
+        const ch: u8 = c;
+        const is_safe = std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_' or ch == '.' or ch == '~';
+        if (is_safe) {
+            try out.append(allocator, ch);
+        } else {
+            try out.append(allocator, '%');
+            try out.append(allocator, std.fmt.digitToChar((ch >> 4) & 0xF, .upper));
+            try out.append(allocator, std.fmt.digitToChar(ch & 0xF, .upper));
+        }
     }
-    return out.toOwnedSlice();
+    return try out.toOwnedSlice(allocator);
 }
 
 pub fn fetchLrclib(
@@ -145,14 +154,10 @@ pub fn fetchLrclib(
     const t = urlEncode(allocator, title) catch return null;
     defer allocator.free(t);
 
-    var url_buf = std.ArrayList(u8).init(allocator);
-    defer url_buf.deinit();
+    const url_get = std.fmt.allocPrint(allocator, "{s}/get?artist_name={s}&track_name={s}", .{ base, a, t }) catch return null;
+    defer allocator.free(url_get);
 
-    // direct /get
-    url_buf.clearRetainingCapacity();
-    url_buf.writer().print("{s}/get?artist_name={s}&track_name={s}", .{ base, a, t }) catch return null;
-
-    if (httpGetAlloc(allocator, url_buf.items, 6000)) |body| {
+    if (httpGetAlloc(allocator, url_get, 6000)) |body| {
         defer allocator.free(body);
         const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch null;
         defer if (parsed) |p| p.deinit();
@@ -175,11 +180,10 @@ pub fn fetchLrclib(
         };
     } else |_| {}
 
-    // fallback /search
-    url_buf.clearRetainingCapacity();
-    url_buf.writer().print("{s}/search?track_name={s}&artist_name={s}", .{ base, t, a }) catch return null;
+    const url_search = std.fmt.allocPrint(allocator, "{s}/search?track_name={s}&artist_name={s}", .{ base, t, a }) catch return null;
+    defer allocator.free(url_search);
 
-    if (httpGetAlloc(allocator, url_buf.items, 8000)) |body| {
+    if (httpGetAlloc(allocator, url_search, 8000)) |body| {
         defer allocator.free(body);
         const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch null;
         defer if (parsed) |p| p.deinit();
@@ -197,10 +201,10 @@ pub fn fetchLrclib(
 }
 
 pub fn parseLrc(allocator: std.mem.Allocator, text: []const u8) ![]Line {
-    var lines = std.ArrayList(Line).init(allocator);
+    var lines = std.ArrayList(Line){};
     errdefer {
         for (lines.items) |ln| allocator.free(ln.text);
-        lines.deinit();
+        lines.deinit(allocator);
     }
 
     var it = std.mem.tokenizeScalar(u8, text, '\n');
@@ -210,8 +214,8 @@ pub fn parseLrc(allocator: std.mem.Allocator, text: []const u8) ![]Line {
 
         // collect all [mm:ss.xx]
         var start: usize = 0;
-        var times = std.ArrayList(f64).init(allocator);
-        defer times.deinit();
+        var times = std.ArrayList(f64){};
+        defer times.deinit(allocator);
 
         while (true) {
             if (std.mem.indexOf(u8, line[start..], "[")) |lb| {
@@ -234,7 +238,7 @@ pub fn parseLrc(allocator: std.mem.Allocator, text: []const u8) ![]Line {
                             ss = std.fmt.parseUnsigned(u64, rest, 10) catch 0;
                         }
                         const t_value: f64 = @as(f64, @floatFromInt(mm * 60 + ss)) + (@as(f64, @floatFromInt(cs)) / 100.0);
-                        try times.append(t_value);
+                        try times.append(allocator, t_value);
                     }
                     start = rb + 1;
                     continue;
@@ -248,10 +252,10 @@ pub fn parseLrc(allocator: std.mem.Allocator, text: []const u8) ![]Line {
         if (lyric.len == 0 and times.items.len == 0) continue;
 
         if (times.items.len == 0) {
-            try lines.append(Line{ .t = 0, .text = try allocator.dupe(u8, lyric) });
+            try lines.append(allocator, Line{ .t = 0, .text = try allocator.dupe(u8, lyric) });
         } else {
             for (times.items) |tsec| {
-                try lines.append(Line{ .t = tsec, .text = try allocator.dupe(u8, lyric) });
+                try lines.append(allocator, Line{ .t = tsec, .text = try allocator.dupe(u8, lyric) });
             }
         }
     }
@@ -262,7 +266,7 @@ pub fn parseLrc(allocator: std.mem.Allocator, text: []const u8) ![]Line {
         }
     }.lessThan);
 
-    return lines.toOwnedSlice();
+    return try lines.toOwnedSlice(allocator);
 }
 
 test "lrclib search prefers synced lyrics" {
@@ -328,18 +332,18 @@ test "lrclib search falls back to plain lyrics when no synced result" {
 }
 
 pub fn synthTimeline(allocator: std.mem.Allocator, text: []const u8) ![]Line {
-    var out = std.ArrayList(Line).init(allocator);
+    var out = std.ArrayList(Line){};
     errdefer {
         for (out.items) |ln| allocator.free(ln.text);
-        out.deinit();
+        out.deinit(allocator);
     }
     var it = std.mem.tokenizeScalar(u8, text, '\n');
     var t: f64 = 0.0;
     while (it.next()) |raw| {
         const s = std.mem.trim(u8, raw, " \r");
         if (s.len == 0) continue;
-        try out.append(Line{ .t = t, .text = try allocator.dupe(u8, s) });
+        try out.append(allocator, Line{ .t = t, .text = try allocator.dupe(u8, s) });
         t += 3.2;
     }
-    return out.toOwnedSlice();
+    return try out.toOwnedSlice(allocator);
 }

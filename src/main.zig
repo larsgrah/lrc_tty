@@ -27,7 +27,9 @@ pub fn main() !void {
             alloc.free(players);
         }
 
-        const stdout = std.io.getStdOut().writer();
+        var stdout_buffer: [1024]u8 = undefined;
+        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        const stdout = &stdout_writer.interface;
         if (players.len == 0) {
             try stdout.print("No MPRIS players found.\n", .{});
         } else {
@@ -36,6 +38,7 @@ pub fn main() !void {
                 try stdout.print("- {s}\n", .{p});
             }
         }
+        try stdout.flush();
         return;
     }
 
@@ -193,9 +196,12 @@ fn runRaw(allocator: std.mem.Allocator, cfg: config.Config) !void {
         lines_owned = true;
     }
 
-    const stdout = std.io.getStdOut().writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
     if (lines.len == 0) {
         try stdout.print("(no lyrics)\n", .{});
+        try stdout.flush();
         return;
     }
 
@@ -208,6 +214,7 @@ fn runRaw(allocator: std.mem.Allocator, cfg: config.Config) !void {
     } else {
         try stdout.print("{s}\n", .{line.text});
     }
+    try stdout.flush();
 }
 
 fn nearestLineIndex(lines: []const lyrics.Line, t: f64) usize {

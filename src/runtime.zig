@@ -2,7 +2,7 @@ const std = @import("std");
 
 var exit_requested = std.atomic.Value(bool).init(false);
 
-fn handleSignal(_: i32) callconv(.C) void {
+fn handleSignal(_: i32) callconv(.c) void {
     const show_cursor = "\x1b[?25h";
     _ = std.posix.system.write(std.posix.STDOUT_FILENO, show_cursor.ptr, show_cursor.len);
     exit_requested.store(true, .seq_cst);
@@ -11,11 +11,11 @@ fn handleSignal(_: i32) callconv(.C) void {
 pub fn installSignalHandlers() !void {
     var action = std.posix.Sigaction{
         .handler = .{ .handler = handleSignal },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = 0,
     };
-    try std.posix.sigaction(std.posix.SIG.INT, &action, null);
-    try std.posix.sigaction(std.posix.SIG.TERM, &action, null);
+    std.posix.sigaction(std.posix.SIG.INT, &action, null);
+    std.posix.sigaction(std.posix.SIG.TERM, &action, null);
 }
 
 pub fn shouldExit() bool {

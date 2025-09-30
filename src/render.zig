@@ -113,20 +113,20 @@ pub const RenderState = struct {
 
 fn getTerminalSize() TerminalSize {
     var size = TerminalSize{ .rows = 24, .cols = 80 };
-    const stdout_file = std.io.getStdOut();
+    const stdout_file = std.fs.File.stdout();
     const fd = stdout_file.handle;
 
     var ws: std.posix.winsize = .{
-        .ws_row = 0,
-        .ws_col = 0,
-        .ws_xpixel = 0,
-        .ws_ypixel = 0,
+        .row = 0,
+        .col = 0,
+        .xpixel = 0,
+        .ypixel = 0,
     };
 
     const err = std.posix.system.ioctl(fd, std.posix.T.IOCGWINSZ, @intFromPtr(&ws));
-    if (std.posix.errno(err) == .SUCCESS and ws.ws_row != 0 and ws.ws_col != 0) {
-        size.rows = ws.ws_row;
-        size.cols = ws.ws_col;
+    if (std.posix.errno(err) == .SUCCESS and ws.row != 0 and ws.col != 0) {
+        size.rows = ws.row;
+        size.cols = ws.col;
     }
 
     return size;

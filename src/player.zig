@@ -20,6 +20,18 @@ var connection: ?*c.DBusConnection = null;
 var match_rule: ?[:0]u8 = null;
 var match_player: ?[]u8 = null;
 
+fn allocPrintZ(
+    allocator: std.mem.Allocator,
+    comptime fmt: []const u8,
+    args: anytype,
+) ![:0]u8 {
+    const tmp = try std.fmt.allocPrint(allocator, fmt, args);
+    defer allocator.free(tmp);
+    var result = try allocator.allocSentinel(u8, tmp.len, 0);
+    @memcpy(result[0..tmp.len], tmp);
+    return result;
+}
+
 pub const Meta = struct {
     title: []u8,
     artist: []u8,
@@ -80,7 +92,7 @@ fn ensurePropertiesMatch(player: []const u8) !*c.DBusConnection {
     const new_player = try c_allocator.dupe(u8, trimmed);
     errdefer c_allocator.free(new_player);
 
-    const rule = try std.fmt.allocPrintZ(
+    const rule = try allocPrintZ(
         c_allocator,
         "type='signal',interface='{s}',member='{s}',path='{s}',sender='org.mpris.MediaPlayer2.{s}'",
         .{ properties_iface, properties_changed, object_path, trimmed },
@@ -97,7 +109,7 @@ fn ensurePropertiesMatch(player: []const u8) !*c.DBusConnection {
 fn busName(allocator: std.mem.Allocator, player: []const u8) ![:0]u8 {
     const trimmed = std.mem.trim(u8, player, " ");
     if (trimmed.len == 0) return error.InvalidPlayerName;
-    return std.fmt.allocPrintZ(allocator, "org.mpris.MediaPlayer2.{s}", .{trimmed});
+    return allocPrintZ(allocator, "org.mpris.MediaPlayer2.{s}", .{trimmed});
 }
 
 fn sendPropertyGet(
@@ -356,10 +368,10 @@ pub fn listPlayers(allocator: std.mem.Allocator) ![][]u8 {
     var array_iter = c.DBusMessageIter{};
     c.dbus_message_iter_recurse(&iter, &array_iter);
 
-    var list = std.ArrayList([]u8).init(allocator);
+    var list = std.ArrayList([]u8){};
     errdefer {
         for (list.items) |item| allocator.free(item);
-        list.deinit();
+        list.deinit(allocator);
     }
 
     while (c.dbus_message_iter_get_arg_type(&array_iter) != c.DBUS_TYPE_INVALID) {
@@ -370,12 +382,12 @@ pub fn listPlayers(allocator: std.mem.Allocator) ![][]u8 {
         if (std.mem.startsWith(u8, full, mpris_prefix)) {
             const suffix = full[mpris_prefix.len ..];
             const copy = try allocator.dupe(u8, suffix);
-            try list.append(copy);
+            try list.append(allocator, copy);
         }
         if (c.dbus_message_iter_next(&array_iter) == 0) break;
     }
 
-    return try list.toOwnedSlice();
+    return try list.toOwnedSlice(allocator);
 }
 
 pub fn waitForChange(player: []const u8, timeout_ms: i32) !bool {
