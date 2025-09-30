@@ -17,6 +17,28 @@ pub fn main() !void {
     const cfg = try config.parse(alloc);
     defer cfg.deinit(alloc);
 
+    if (cfg.list_players) {
+        const players = player.listPlayers(alloc) catch |err| {
+            std.debug.print("failed to list players: {s}\n", .{@errorName(err)});
+            return;
+        };
+        defer {
+            for (players) |p| alloc.free(p);
+            alloc.free(players);
+        }
+
+        const stdout = std.io.getStdOut().writer();
+        if (players.len == 0) {
+            try stdout.print("No MPRIS players found.\n", .{});
+        } else {
+            try stdout.print("Available players:\n", .{});
+            for (players) |p| {
+                try stdout.print("- {s}\n", .{p});
+            }
+        }
+        return;
+    }
+
     if (cfg.raw_output) {
         try runRaw(alloc, cfg);
         return;
@@ -32,7 +54,11 @@ pub fn main() !void {
             break :blk std.fmt.parseFloat(f64, v) catch 0.12;
         } else |_| break :blk 0.12;
     };
-    const sleep_ns: u64 = @intFromFloat(poll * @as(f64, @floatFromInt(std.time.ns_per_s)));
+    var poll_ms_f = poll * 1000.0;
+    const poll_ms_max = @as(f64, @floatFromInt(std.math.maxInt(i32)));
+    if (poll_ms_f < 1.0) poll_ms_f = 1.0;
+    if (poll_ms_f > poll_ms_max) poll_ms_f = poll_ms_max;
+    const poll_ms: i32 = @intFromFloat(poll_ms_f);
 
     var last_track = try alloc.dupe(u8, "");
     defer alloc.free(last_track);
@@ -124,7 +150,7 @@ pub fn main() !void {
         renderer.draw(title, artist, album, status, pos, lines, src);
 
         if (runtime.shouldExit()) break;
-        runtime.sleepWithExit(sleep_ns);
+        _ = player.waitForChange(cfg.player, poll_ms) catch {};
     }
 }
 

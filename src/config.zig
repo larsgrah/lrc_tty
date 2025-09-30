@@ -6,6 +6,7 @@ pub const Config = struct {
     raw_output: bool,
     dim_inactive: bool,
     player: []u8,
+    list_players: bool,
 
     pub fn deinit(self: Config, allocator: std.mem.Allocator) void {
         allocator.free(self.player);
@@ -20,6 +21,7 @@ pub fn parse(allocator: std.mem.Allocator) !Config {
     var visible_lines: usize = 3;
     var raw_output = false;
     var dim_inactive = false;
+    var list_players = false;
     var player_override: ?[]u8 = null;
     errdefer if (player_override) |p| allocator.free(p);
 
@@ -66,6 +68,9 @@ pub fn parse(allocator: std.mem.Allocator) !Config {
         } else if (std.mem.eql(u8, arg, "--dim")) {
             dim_inactive = true;
             i += 1;
+        } else if (std.mem.eql(u8, arg, "--list-players")) {
+            list_players = true;
+            i += 1;
         } else if (std.mem.eql(u8, arg, "--help")) {
             usage();
             std.process.exit(0);
@@ -99,6 +104,7 @@ pub fn parse(allocator: std.mem.Allocator) !Config {
         .raw_output = raw_output,
         .dim_inactive = dim_inactive,
         .player = player_buf,
+        .list_players = list_players,
     };
 }
 
@@ -108,10 +114,11 @@ pub fn usage() void {
             "       lrc_tty [--help]\n\n" ++
             "Options:\n" ++
             "  --timestamp    Prefix each line with [mm:ss].\n" ++
-            "  --player NAME  Select playerctl -p target (default env LRC_TTY_PLAYER or playerctld).\n" ++
+            "  --player NAME  Select MPRIS player target (default env LRC_TTY_PLAYER or playerctld).\n" ++
             "  --lines NUM    Display NUM lyric rows (default 3).\n" ++
             "  --raw          Print the current lyric line and exit.\n" ++
             "  --dim          Dim non-focused lines in the TUI.\n" ++
+            "  --list-players Show detected MPRIS players and exit.\n" ++
             "  -h, --help     Show this help text.\n",
         .{},
     );

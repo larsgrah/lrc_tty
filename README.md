@@ -2,13 +2,17 @@
 
 `lrc_tty` is a terminal lyric viewer for any MPRIS-compatible player, talking directly to the session DBus and lrclib.net. It fetches synced or plain lyrics, keeps them cached locally, and renders a minimal TUI that highlights the current line. A raw mode is also available for scripts that just want the line matching the current playback position.
 
+[![asciicast](https://asciinema.org/a/L7AKmoiom8G3evVR7uBDCFyja.svg)](https://asciinema.org/a/L7AKmoiom8G3evVR7uBDCFyja)
+
 ## Features
 
 - Highlights the current lyric line with optional `[mm:ss]` timestamps.
 - Works with any MPRIS player via DBus; configurable target.
+- Reacts immediately to playback changes via DBus signals.
 - Adjustable lyric window size (`--lines NUM`).
 - Disk-backed lyric cache to avoid repeat network fetches.
 - `--raw` mode for one-off lyric lookups from shell scripts.
+- `--list-players` reports detected MPRIS player names for quick targeting.
 
 ## Build
 

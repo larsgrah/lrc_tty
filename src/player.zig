@@ -8,8 +8,17 @@ const object_path: [:0]const u8 = "/org/mpris/MediaPlayer2";
 const properties_iface: [:0]const u8 = "org.freedesktop.DBus.Properties";
 const player_iface: [:0]const u8 = "org.mpris.MediaPlayer2.Player";
 const method_get: [:0]const u8 = "Get";
+const properties_changed: [:0]const u8 = "PropertiesChanged";
+const dbus_service: [:0]const u8 = "org.freedesktop.DBus";
+const dbus_path: [:0]const u8 = "/org/freedesktop/DBus";
+const dbus_iface: [:0]const u8 = "org.freedesktop.DBus";
+const dbus_list_names: [:0]const u8 = "ListNames";
+const mpris_prefix: []const u8 = "org.mpris.MediaPlayer2.";
+const c_allocator = std.heap.c_allocator;
 
 var connection: ?*c.DBusConnection = null;
+var match_rule: ?[:0]u8 = null;
+var match_player: ?[]u8 = null;
 
 pub const Meta = struct {
     title: []u8,
@@ -27,6 +36,14 @@ pub const Meta = struct {
 };
 
 fn resetConnection() void {
+    if (match_rule) |rule| {
+        c_allocator.free(rule);
+        match_rule = null;
+    }
+    if (match_player) |p| {
+        c_allocator.free(p);
+        match_player = null;
+    }
     if (connection) |conn| {
         c.dbus_connection_unref(conn);
         connection = null;
@@ -39,6 +56,41 @@ fn ensureConnection() !*c.DBusConnection {
     const conn = c.dbus_bus_get(c.DBUS_BUS_SESSION, null) orelse return error.DBusConnectFailed;
     c.dbus_connection_set_exit_on_disconnect(conn, 0);
     connection = conn;
+    return conn;
+}
+
+fn ensurePropertiesMatch(player: []const u8) !*c.DBusConnection {
+    var trimmed = std.mem.trim(u8, player, " ");
+    if (trimmed.len == 0) return error.InvalidPlayerName;
+
+    const conn = try ensureConnection();
+
+    if (match_player) |current| {
+        if (std.mem.eql(u8, trimmed, current)) return conn;
+        if (match_rule) |rule| {
+            c.dbus_bus_remove_match(conn, rule.ptr, null);
+            c.dbus_connection_flush(conn);
+            c_allocator.free(rule);
+            match_rule = null;
+        }
+        c_allocator.free(current);
+        match_player = null;
+    }
+
+    const new_player = try c_allocator.dupe(u8, trimmed);
+    errdefer c_allocator.free(new_player);
+
+    const rule = try std.fmt.allocPrintZ(
+        c_allocator,
+        "type='signal',interface='{s}',member='{s}',path='{s}',sender='org.mpris.MediaPlayer2.{s}'",
+        .{ properties_iface, properties_changed, object_path, trimmed },
+    );
+    errdefer c_allocator.free(rule);
+
+    c.dbus_bus_add_match(conn, rule.ptr, null);
+    c.dbus_connection_flush(conn);
+    match_rule = rule;
+    match_player = new_player;
     return conn;
 }
 
@@ -280,4 +332,68 @@ pub fn getMeta(allocator: std.mem.Allocator, player: []const u8) Meta {
 
     fetchMetadata(allocator, player, &m) catch {};
     return m;
+}
+
+pub fn listPlayers(allocator: std.mem.Allocator) ![][]u8 {
+    const conn = try ensureConnection();
+    const msg_ptr = c.dbus_message_new_method_call(dbus_service.ptr, dbus_path.ptr, dbus_iface.ptr, dbus_list_names.ptr);
+    if (msg_ptr == null) return error.OutOfMemory;
+    const msg = msg_ptr.?;
+    defer c.dbus_message_unref(msg);
+
+    const reply_ptr = c.dbus_connection_send_with_reply_and_block(conn, msg, -1, null);
+    if (reply_ptr == null) {
+        resetConnection();
+        return error.DBusCallFailed;
+    }
+    const reply = reply_ptr.?;
+    defer c.dbus_message_unref(reply);
+
+    var iter = c.DBusMessageIter{};
+    if (c.dbus_message_iter_init(reply, &iter) == 0) return error.InvalidReply;
+    if (c.dbus_message_iter_get_arg_type(&iter) != c.DBUS_TYPE_ARRAY) return error.TypeMismatch;
+
+    var array_iter = c.DBusMessageIter{};
+    c.dbus_message_iter_recurse(&iter, &array_iter);
+
+    var list = std.ArrayList([]u8).init(allocator);
+    errdefer {
+        for (list.items) |item| allocator.free(item);
+        list.deinit();
+    }
+
+    while (c.dbus_message_iter_get_arg_type(&array_iter) != c.DBUS_TYPE_INVALID) {
+        var name_ptr: [*:0]const u8 = undefined;
+        const name_arg: ?*anyopaque = @ptrCast(&name_ptr);
+        c.dbus_message_iter_get_basic(&array_iter, name_arg);
+        const full = std.mem.span(name_ptr);
+        if (std.mem.startsWith(u8, full, mpris_prefix)) {
+            const suffix = full[mpris_prefix.len ..];
+            const copy = try allocator.dupe(u8, suffix);
+            try list.append(copy);
+        }
+        if (c.dbus_message_iter_next(&array_iter) == 0) break;
+    }
+
+    return try list.toOwnedSlice();
+}
+
+pub fn waitForChange(player: []const u8, timeout_ms: i32) !bool {
+    const conn = try ensurePropertiesMatch(player);
+    var clamped = timeout_ms;
+    if (clamped < 0) clamped = 0;
+    if (clamped > std.math.maxInt(c_int)) clamped = std.math.maxInt(c_int);
+    const wait_ms: c_int = @intCast(clamped);
+    _ = c.dbus_connection_read_write(conn, wait_ms);
+
+    while (true) {
+        const msg_ptr = c.dbus_connection_pop_message(conn);
+        if (msg_ptr == null) return false;
+        const msg = msg_ptr.?;
+        defer c.dbus_message_unref(msg);
+
+        if (c.dbus_message_is_signal(msg, properties_iface.ptr, properties_changed.ptr) != 0) {
+            return true;
+        }
+    }
 }
