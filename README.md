@@ -14,16 +14,19 @@
 - `--raw` mode for one-off lyric lookups from shell scripts.
 - `--list-players` reports detected MPRIS player names for quick targeting.
 
-## Build
+## Installation
+
+### From source
 
 This repository uses the Zig build system. Development headers for `libdbus-1` and `pkg-config` are required (usually provided by a `dbus-1` development package on your distribution).
 
-```
+```sh
 zig build -Doptimize=ReleaseSafe
 ```
 
-Running the TUI is done through the build runner:
+The resulting binary is placed under `zig-out/bin/lrc_tty`. You can add that directory to your `PATH` or install manually where you prefer.
 
+Run the TUI straight from the build runner:
 
 ```sh
 zig build run -- --timestamp --lines 5
@@ -33,6 +36,32 @@ For raw mode:
 
 ```sh
 zig build run -- --raw --timestamp
+```
+
+### Arch Linux (AUR)
+
+An AUR package is available at `ssh://aur.archlinux.org/lrc_tty.git`. Clone it and build with `makepkg`:
+
+```sh
+git clone ssh://aur.archlinux.org/lrc_tty.git
+cd lrc_tty
+makepkg -si
+```
+or use your favourite aur helper like yay: 
+
+```sh
+yay -S lrc_tty
+```
+
+### Void Linux
+
+A Void Linux template lives in `https://github.com/larsgrah/void-custom/tree/master`.
+
+```sh
+git clone https://github.com/larsgrah/void-custom.git
+cd void-custom
+./xbps-src pkg lrc_tty
+xi lrc_tty
 ```
 
 ## Environment
