@@ -34,6 +34,21 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run lrc_tty");
     run_step.dependOn(&run_cmd.step);
+
+    const test_module = b.createModule(.{
+        .root_source_file = b.path("src/render.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const unit_tests = b.addTest(.{
+        .name = "render_tests",
+        .root_module = test_module,
+    });
+
+    const run_tests = b.addRunArtifact(unit_tests);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_tests.step);
 }
 
 fn parsePkgConfigFlags(exe: *std.Build.Step.Compile, flags: []const u8) void {
