@@ -15,11 +15,11 @@ pub fn build(b: *std.Build) void {
         .root_module = root_module,
     });
 
-    exe.linkLibC();
-    exe.linkSystemLibrary("dbus-1");
+    exe.root_module.link_libc = true;
+    exe.root_module.linkSystemLibrary("dbus-1", .{});
 
     var code: u8 = undefined;
-    const dbus_cflags = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", "dbus-1" }, &code, .Inherit) catch |err| {
+    const dbus_cflags = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", "dbus-1" }, &code, .inherit) catch |err| {
         std.debug.print("failed to query pkg-config for dbus-1 ({s}); ensure pkg-config and libdbus-1 development headers are installed\n", .{@errorName(err)});
         @panic("pkg-config dbus-1");
     };
@@ -91,7 +91,7 @@ fn addInclude(exe: *std.Build.Step.Compile, path: []const u8) void {
         return;
     }
     if (path.len == 0) return;
-    exe.addIncludePath(.{ .cwd_relative = exe.step.owner.dupe(path) });
+    exe.root_module.addIncludePath(.{ .cwd_relative = exe.step.owner.dupe(path) });
 }
 
 fn addMacro(exe: *std.Build.Step.Compile, macro: []const u8) void {

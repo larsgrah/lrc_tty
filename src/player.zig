@@ -368,7 +368,7 @@ pub fn listPlayers(allocator: std.mem.Allocator) ![][]u8 {
     var array_iter = c.DBusMessageIter{};
     c.dbus_message_iter_recurse(&iter, &array_iter);
 
-    var list = std.ArrayList([]u8){};
+    var list = std.ArrayList([]u8).empty;
     errdefer {
         for (list.items) |item| allocator.free(item);
         list.deinit(allocator);

@@ -1,21 +1,26 @@
 const std = @import("std");
 
-fn resolveCacheRoot(allocator: std.mem.Allocator) ![]u8 {
-    if (std.process.getEnvVarOwned(allocator, "LRC_TTY_CACHE")) |path| {
-        return path;
-    } else |_| {}
+fn getEnvOwned(allocator: std.mem.Allocator, name: [*:0]const u8) ?[]u8 {
+    const v = std.c.getenv(name) orelse return null;
+    return allocator.dupe(u8, std.mem.span(v)) catch null;
+}
 
-    if (std.process.getEnvVarOwned(allocator, "XDG_CACHE_HOME")) |base| {
+fn resolveCacheRoot(allocator: std.mem.Allocator) ![]u8 {
+    if (getEnvOwned(allocator, "LRC_TTY_CACHE")) |path| {
+        return path;
+    }
+
+    if (getEnvOwned(allocator, "XDG_CACHE_HOME")) |base| {
         defer allocator.free(base);
         return std.fs.path.join(allocator, &.{ base, "lrc_tty" });
-    } else |_| {}
+    }
 
-    if (std.process.getEnvVarOwned(allocator, "HOME")) |home| {
+    if (getEnvOwned(allocator, "HOME")) |home| {
         defer allocator.free(home);
         return std.fs.path.join(allocator, &.{ home, ".cache", "lrc_tty" });
-    } else |_| {}
+    }
 
-    return std.fs.getAppDataDir(allocator, "lrc_tty");
+    return error.NoCacheDir;
 }
 
 fn computeHash(track_id: []const u8, artist: []const u8, title: []const u8, length: f64) u64 {
@@ -34,6 +39,7 @@ fn computeHash(track_id: []const u8, artist: []const u8, title: []const u8, leng
 
 fn cachePath(
     allocator: std.mem.Allocator,
+    io: std.Io,
     track_id: []const u8,
     artist: []const u8,
     title: []const u8,
@@ -42,57 +48,40 @@ fn cachePath(
     const root = try resolveCacheRoot(allocator);
     defer allocator.free(root);
 
-    try ensureDirExists(root);
+    try std.Io.Dir.cwd().createDirPath(io, root);
 
     const hash = computeHash(track_id, artist, title, length);
     return std.fmt.allocPrint(allocator, "{s}/track-{x:016}.lrc", .{ root, hash });
 }
 
-fn ensureDirExists(path: []const u8) !void {
-    if (std.fs.path.isAbsolute(path)) {
-        std.fs.makeDirAbsolute(path) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
-    } else {
-        try std.fs.cwd().makePath(path);
-    }
-}
-
 pub fn load(
     allocator: std.mem.Allocator,
+    io: std.Io,
     track_id: []const u8,
     artist: []const u8,
     title: []const u8,
     length: f64,
 ) !?[]u8 {
-    const path = cachePath(allocator, track_id, artist, title, length) catch return null;
+    const path = cachePath(allocator, io, track_id, artist, title, length) catch return null;
     defer allocator.free(path);
 
-    const file = std.fs.openFileAbsolute(path, .{}) catch |err| switch (err) {
+    return std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };
-    defer file.close();
-
-    const stat = try file.stat();
-    var buffer = try allocator.alloc(u8, @intCast(stat.size));
-    const read_bytes = try file.readAll(buffer);
-    return buffer[0..read_bytes];
 }
 
 pub fn store(
     allocator: std.mem.Allocator,
+    io: std.Io,
     track_id: []const u8,
     artist: []const u8,
     title: []const u8,
     length: f64,
     data: []const u8,
 ) !void {
-    const path = try cachePath(allocator, track_id, artist, title, length);
+    const path = try cachePath(allocator, io, track_id, artist, title, length);
     defer allocator.free(path);
 
-    const file = try std.fs.createFileAbsolute(path, .{ .truncate = true, .read = false });
-    defer file.close();
-    try file.writeAll(data);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = data });
 }

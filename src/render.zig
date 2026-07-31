@@ -573,7 +573,7 @@ pub const RenderState = struct {
 
 fn getTerminalSize() TerminalSize {
     var size = TerminalSize{ .rows = 24, .cols = 80 };
-    const stdout_file = std.fs.File.stdout();
+    const stdout_file = std.Io.File.stdout();
     const fd = stdout_file.handle;
 
     var ws: std.posix.winsize = .{
