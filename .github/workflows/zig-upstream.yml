@@ -1,0 +1,49 @@
+name: Zig upstream watch
+
+# Early warning for the failure mode that produced v0.7: upstream Zig moves,
+# a rolling distro picks it up, and the build breaks for users before we notice.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  pin-drift:
+    name: Check pinned Zig against latest release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare .tool-versions with latest Zig release
+        run: |
+          pinned=$(awk '/^zig /{print $2}' .tool-versions)
+          latest=$(curl -sSf https://ziglang.org/download/index.json \
+            | python3 -c 'import json,sys; print(next(k for k in json.load(sys.stdin) if k != "master"))')
+          echo "pinned: $pinned"  >> "$GITHUB_STEP_SUMMARY"
+          echo "latest: $latest"  >> "$GITHUB_STEP_SUMMARY"
+          if [ "$pinned" != "$latest" ]; then
+            echo "::warning::Zig $latest is out, we pin $pinned. Rolling distros will move before we do."
+            exit 1
+          fi
+          echo "Pin is current."
+
+  build-master:
+    name: Build against Zig master
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dbus headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: master
+
+      - run: zig build
+
+      - run: zig build test
