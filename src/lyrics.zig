@@ -158,6 +158,10 @@ pub fn fetchLrclib(
     const url_get = std.fmt.allocPrint(allocator, "{s}/get?artist_name={s}&track_name={s}", .{ base, a, t }) catch return null;
     defer allocator.free(url_get);
 
+    // get answers with one exact record, and it is often plain only while
+    // search has a timed copy of the same recording. so keep it, do not return
+    var plain: ?FetchResult = null;
+
     if (httpGetAlloc(allocator, io, url_get, 6000)) |body| {
         defer allocator.free(body);
         const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch null;
@@ -166,13 +170,20 @@ pub fn fetchLrclib(
             .object => |obj| {
                 if (obj.get("syncedLyrics")) |synp| {
                     switch (synp) {
-                        .string => |s| return FetchResult{ .lrc = allocator.dupe(u8, s) catch return null, .src = "lrclib:get" },
+                        .string => |s| if (s.len != 0) {
+                            return FetchResult{ .lrc = allocator.dupe(u8, s) catch return null, .src = "lrclib:get" };
+                        },
                         else => {},
                     }
                 }
                 if (obj.get("plainLyrics")) |plp| {
                     switch (plp) {
-                        .string => |s| return FetchResult{ .lrc = allocator.dupe(u8, s) catch return null, .src = "lrclib:get" },
+                        .string => |s| if (s.len != 0) {
+                            plain = FetchResult{
+                                .lrc = allocator.dupe(u8, s) catch return null,
+                                .src = "lrclib:get",
+                            };
+                        },
                         else => {},
                     }
                 }
@@ -181,7 +192,7 @@ pub fn fetchLrclib(
         };
     } else |_| {}
 
-    const url_search = std.fmt.allocPrint(allocator, "{s}/search?track_name={s}&artist_name={s}", .{ base, t, a }) catch return null;
+    const url_search = std.fmt.allocPrint(allocator, "{s}/search?track_name={s}&artist_name={s}", .{ base, t, a }) catch return plain;
     defer allocator.free(url_search);
 
     if (httpGetAlloc(allocator, io, url_search, 8000)) |body| {
@@ -191,14 +202,18 @@ pub fn fetchLrclib(
         if (parsed) |p| switch (p.value) {
             .array => |arr| {
                 if (selectBestSearchResult(arr, artist, title, length)) |best| {
-                    return FetchResult{ .lrc = allocator.dupe(u8, best.lrc) catch return null, .src = "lrclib:search" };
+                    if (best.is_synced or plain == null) {
+                        const dup = allocator.dupe(u8, best.lrc) catch return plain;
+                        if (plain) |f| allocator.free(f.lrc);
+                        return FetchResult{ .lrc = dup, .src = "lrclib:search" };
+                    }
                 }
             },
             else => {},
         };
     } else |_| {}
 
-    return null;
+    return plain;
 }
 
 pub fn parseLrc(allocator: std.mem.Allocator, text: []const u8) ![]Line {
