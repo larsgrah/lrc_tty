@@ -46,9 +46,22 @@ pub fn build(b: *std.Build) void {
         .root_module = test_module,
     });
 
+    const lyrics_test_module = b.createModule(.{
+        .root_source_file = b.path("src/lyrics.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const lyrics_tests = b.addTest(.{
+        .name = "lyrics_tests",
+        .root_module = lyrics_test_module,
+    });
+
     const run_tests = b.addRunArtifact(unit_tests);
+    const run_lyrics_tests = b.addRunArtifact(lyrics_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_lyrics_tests.step);
 }
 
 fn parsePkgConfigFlags(exe: *std.Build.Step.Compile, flags: []const u8) void {

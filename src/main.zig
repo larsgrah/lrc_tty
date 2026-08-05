@@ -10,7 +10,7 @@ pub fn main(init: std.process.Init) !void {
     const alloc = init.gpa;
     const io = init.io;
 
-    const cfg = try config.parse(alloc, init.minimal.args);
+    const cfg = try config.parse(alloc, init.arena.allocator(), init.minimal.args);
     defer cfg.deinit(alloc);
 
     if (cfg.list_players) {

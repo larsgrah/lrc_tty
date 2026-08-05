@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dbus headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
+      - name: Read Zig version from .tool-versions
+        id: zig
+        run: echo "version=$(awk '/^zig /{print $2}' .tool-versions)" >> "$GITHUB_OUTPUT"
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zig.outputs.version }}
+
+      - run: zig build
+
+      - run: zig build test
+
+      - name: Smoke test the binary
+        run: ./zig-out/bin/lrc_tty --help

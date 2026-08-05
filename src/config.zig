@@ -13,9 +13,9 @@ pub const Config = struct {
     }
 };
 
-pub fn parse(allocator: std.mem.Allocator, proc_args: std.process.Args) !Config {
-    const args = try proc_args.toSlice(allocator);
-    defer allocator.free(args);
+pub fn parse(allocator: std.mem.Allocator, arena: std.mem.Allocator, proc_args: std.process.Args) !Config {
+    // toSlice needs an arena, the result can point into several allocations
+    const args = try proc_args.toSlice(arena);
 
     var show_timestamp = false;
     var visible_lines: usize = 3;
