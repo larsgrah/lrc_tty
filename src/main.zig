@@ -38,6 +38,11 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (cfg.dump_output) {
+        try runDump(alloc, io, cfg);
+        return;
+    }
+
     if (cfg.raw_output) {
         try runRaw(alloc, io, cfg);
         return;
@@ -158,8 +163,46 @@ fn freeLines(allocator: std.mem.Allocator, list: []lyrics.Line) void {
     allocator.free(list);
 }
 
+// a supplied track has no mpris id on purpose, the cache key then falls back
+// to artist|title|length
+fn metaFor(allocator: std.mem.Allocator, cfg: config.Config) !player.Meta {
+    if (cfg.title) |t| {
+        return player.Meta{
+            .trackid = try allocator.dupe(u8, ""),
+            .title = try allocator.dupe(u8, t),
+            .artist = try allocator.dupe(u8, cfg.artist orelse ""),
+            .album = try allocator.dupe(u8, ""),
+            .length = cfg.duration orelse 0,
+        };
+    }
+    return player.getMeta(allocator, cfg.player);
+}
+
+fn runDump(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config) !void {
+    const meta = try metaFor(allocator, cfg);
+    defer meta.deinit(allocator);
+
+    var text: ?[]u8 = cache.load(allocator, io, meta.trackid, meta.artist, meta.title, meta.length) catch null;
+    if (text == null) {
+        if (lyrics.fetchLrclib(allocator, io, meta.artist, meta.title, meta.length)) |res| {
+            cache.store(allocator, io, meta.trackid, meta.artist, meta.title, meta.length, res.lrc) catch {};
+            text = res.lrc;
+        }
+    }
+    defer if (text) |t| allocator.free(t);
+
+    const body = text orelse std.process.exit(1);
+
+    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
+    const stdout = &stdout_writer.interface;
+    try stdout.writeAll(body);
+    if (body.len == 0 or body[body.len - 1] != '\n') try stdout.writeAll("\n");
+    try stdout.flush();
+}
+
 fn runRaw(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config) !void {
-    const meta = player.getMeta(allocator, cfg.player);
+    const meta = try metaFor(allocator, cfg);
     defer meta.deinit(allocator);
 
     const pos = player.getPosition(allocator, cfg.player);
