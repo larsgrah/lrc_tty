@@ -18,7 +18,7 @@
 
 ### From source
 
-This repository uses the Zig build system. Development headers for `libdbus-1` and `pkg-config` are required (usually provided by a `dbus-1` development package on your distribution).
+This repository uses the Zig build system and requires Zig 0.16.0. Development headers for `libdbus-1` and `pkg-config` are required (usually provided by a `dbus-1` development package on your distribution).
 
 ```sh
 zig build -Doptimize=ReleaseSafe

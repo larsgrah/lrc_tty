@@ -102,10 +102,10 @@ fn selectBestSearchResult(
     return null;
 }
 
-fn httpGetAlloc(allocator: std.mem.Allocator, url: []const u8, timeout_ms: u64) ![]u8 {
+fn httpGetAlloc(allocator: std.mem.Allocator, io: std.Io, url: []const u8, timeout_ms: u64) ![]u8 {
     _ = timeout_ms; // TODO: plumb through zig std http client timeouts once available
 
-    var client = std.http.Client{ .allocator = allocator };
+    var client = std.http.Client{ .allocator = allocator, .io = io };
     defer client.deinit();
 
     var writer = std.Io.Writer.Allocating.init(allocator);
@@ -125,7 +125,7 @@ fn httpGetAlloc(allocator: std.mem.Allocator, url: []const u8, timeout_ms: u64) 
 }
 
 fn urlEncode(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
-    var out = std.ArrayList(u8){};
+    var out = std.ArrayList(u8).empty;
     defer out.deinit(allocator);
     for (s) |c| {
         const ch: u8 = c;
@@ -143,6 +143,7 @@ fn urlEncode(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
 
 pub fn fetchLrclib(
     allocator: std.mem.Allocator,
+    io: std.Io,
     artist: []const u8,
     title: []const u8,
     length: f64,
@@ -157,7 +158,7 @@ pub fn fetchLrclib(
     const url_get = std.fmt.allocPrint(allocator, "{s}/get?artist_name={s}&track_name={s}", .{ base, a, t }) catch return null;
     defer allocator.free(url_get);
 
-    if (httpGetAlloc(allocator, url_get, 6000)) |body| {
+    if (httpGetAlloc(allocator, io, url_get, 6000)) |body| {
         defer allocator.free(body);
         const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch null;
         defer if (parsed) |p| p.deinit();
@@ -183,7 +184,7 @@ pub fn fetchLrclib(
     const url_search = std.fmt.allocPrint(allocator, "{s}/search?track_name={s}&artist_name={s}", .{ base, t, a }) catch return null;
     defer allocator.free(url_search);
 
-    if (httpGetAlloc(allocator, url_search, 8000)) |body| {
+    if (httpGetAlloc(allocator, io, url_search, 8000)) |body| {
         defer allocator.free(body);
         const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch null;
         defer if (parsed) |p| p.deinit();
@@ -201,7 +202,7 @@ pub fn fetchLrclib(
 }
 
 pub fn parseLrc(allocator: std.mem.Allocator, text: []const u8) ![]Line {
-    var lines = std.ArrayList(Line){};
+    var lines = std.ArrayList(Line).empty;
     errdefer {
         for (lines.items) |ln| allocator.free(ln.text);
         lines.deinit(allocator);
@@ -214,7 +215,7 @@ pub fn parseLrc(allocator: std.mem.Allocator, text: []const u8) ![]Line {
 
         // collect all [mm:ss.xx]
         var start: usize = 0;
-        var times = std.ArrayList(f64){};
+        var times = std.ArrayList(f64).empty;
         defer times.deinit(allocator);
 
         while (true) {
@@ -332,7 +333,7 @@ test "lrclib search falls back to plain lyrics when no synced result" {
 }
 
 pub fn synthTimeline(allocator: std.mem.Allocator, text: []const u8) ![]Line {
-    var out = std.ArrayList(Line){};
+    var out = std.ArrayList(Line).empty;
     errdefer {
         for (out.items) |ln| allocator.free(ln.text);
         out.deinit(allocator);

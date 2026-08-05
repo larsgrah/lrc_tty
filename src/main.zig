@@ -6,15 +6,11 @@ const lyrics = @import("lyrics.zig");
 const render = @import("render.zig");
 const cache = @import("cache.zig");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer {
-        const gpa_status = gpa.deinit();
-        std.debug.assert(gpa_status == .ok);
-    }
-    const alloc = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const alloc = init.gpa;
+    const io = init.io;
 
-    const cfg = try config.parse(alloc);
+    const cfg = try config.parse(alloc, init.arena.allocator(), init.minimal.args);
     defer cfg.deinit(alloc);
 
     if (cfg.list_players) {
@@ -28,7 +24,7 @@ pub fn main() !void {
         }
 
         var stdout_buffer: [1024]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
         const stdout = &stdout_writer.interface;
         if (players.len == 0) {
             try stdout.print("No MPRIS players found.\n", .{});
@@ -43,7 +39,7 @@ pub fn main() !void {
     }
 
     if (cfg.raw_output) {
-        try runRaw(alloc, cfg);
+        try runRaw(alloc, io, cfg);
         return;
     }
 
@@ -52,10 +48,10 @@ pub fn main() !void {
     defer std.debug.print("\x1b[?25h", .{});
 
     const poll = blk: {
-        if (std.process.getEnvVarOwned(alloc, "LRC_TTY_POLL")) |v| {
-            defer alloc.free(v);
-            break :blk std.fmt.parseFloat(f64, v) catch 0.12;
-        } else |_| break :blk 0.12;
+        if (std.c.getenv("LRC_TTY_POLL")) |v| {
+            const v_slice = std.mem.span(v);
+            break :blk std.fmt.parseFloat(f64, v_slice) catch 0.12;
+        } else break :blk 0.12;
     };
     var poll_ms_f = poll * 1000.0;
     const poll_ms_max = @as(f64, @floatFromInt(std.math.maxInt(i32)));
@@ -115,7 +111,7 @@ pub fn main() !void {
             alloc.free(src);
             src = try alloc.dupe(u8, "");
 
-            const cached_opt = cache.load(alloc, meta.trackid, artist, title, meta.length) catch null;
+            const cached_opt = cache.load(alloc, io, meta.trackid, artist, title, meta.length) catch null;
             if (cached_opt) |cached| {
                 defer alloc.free(cached);
                 if (std.mem.indexOfScalar(u8, cached, '[') != null) {
@@ -126,7 +122,7 @@ pub fn main() !void {
                 lines_owned = true;
                 alloc.free(src);
                 src = try alloc.dupe(u8, "lrclib:cache");
-            } else if (lyrics.fetchLrclib(alloc, artist, title, meta.length)) |res| {
+            } else if (lyrics.fetchLrclib(alloc, io, artist, title, meta.length)) |res| {
                 defer alloc.free(res.lrc);
                 alloc.free(src);
                 src = try alloc.dupe(u8, res.src);
@@ -137,7 +133,7 @@ pub fn main() !void {
                     lines = try lyrics.synthTimeline(alloc, res.lrc);
                 }
                 lines_owned = true;
-                cache.store(alloc, meta.trackid, artist, title, meta.length, res.lrc) catch {};
+                cache.store(alloc, io, meta.trackid, artist, title, meta.length, res.lrc) catch {};
             } else {
                 const no = "(no lyrics)";
                 lines = try alloc.alloc(lyrics.Line, 1);
@@ -162,7 +158,7 @@ fn freeLines(allocator: std.mem.Allocator, list: []lyrics.Line) void {
     allocator.free(list);
 }
 
-fn runRaw(allocator: std.mem.Allocator, cfg: config.Config) !void {
+fn runRaw(allocator: std.mem.Allocator, io: std.Io, cfg: config.Config) !void {
     const meta = player.getMeta(allocator, cfg.player);
     defer meta.deinit(allocator);
 
@@ -172,7 +168,7 @@ fn runRaw(allocator: std.mem.Allocator, cfg: config.Config) !void {
     var lines_owned = false;
     defer if (lines_owned) freeLines(allocator, lines);
 
-    const cached_opt = cache.load(allocator, meta.trackid, meta.artist, meta.title, meta.length) catch null;
+    const cached_opt = cache.load(allocator, io, meta.trackid, meta.artist, meta.title, meta.length) catch null;
     if (cached_opt) |cached| {
         defer allocator.free(cached);
         if (std.mem.indexOfScalar(u8, cached, '[') != null) {
@@ -181,7 +177,7 @@ fn runRaw(allocator: std.mem.Allocator, cfg: config.Config) !void {
             lines = try lyrics.synthTimeline(allocator, cached);
         }
         lines_owned = true;
-    } else if (lyrics.fetchLrclib(allocator, meta.artist, meta.title, meta.length)) |res| {
+    } else if (lyrics.fetchLrclib(allocator, io, meta.artist, meta.title, meta.length)) |res| {
         defer allocator.free(res.lrc);
         if (std.mem.indexOfScalar(u8, res.lrc, '[') != null) {
             lines = try lyrics.parseLrc(allocator, res.lrc);
@@ -189,7 +185,7 @@ fn runRaw(allocator: std.mem.Allocator, cfg: config.Config) !void {
             lines = try lyrics.synthTimeline(allocator, res.lrc);
         }
         lines_owned = true;
-        cache.store(allocator, meta.trackid, meta.artist, meta.title, meta.length, res.lrc) catch {};
+        cache.store(allocator, io, meta.trackid, meta.artist, meta.title, meta.length, res.lrc) catch {};
     } else {
         lines = try allocator.alloc(lyrics.Line, 1);
         lines[0] = lyrics.Line{ .t = 0, .text = try allocator.dupe(u8, "(no lyrics)") };
@@ -197,7 +193,7 @@ fn runRaw(allocator: std.mem.Allocator, cfg: config.Config) !void {
     }
 
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
     if (lines.len == 0) {
         try stdout.print("(no lyrics)\n", .{});

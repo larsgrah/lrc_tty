@@ -2,7 +2,7 @@ const std = @import("std");
 
 var exit_requested = std.atomic.Value(bool).init(false);
 
-fn handleSignal(_: i32) callconv(.c) void {
+fn handleSignal(_: std.posix.SIG) callconv(.c) void {
     const show_cursor = "\x1b[?25h";
     _ = std.posix.system.write(std.posix.STDOUT_FILENO, show_cursor.ptr, show_cursor.len);
     exit_requested.store(true, .seq_cst);

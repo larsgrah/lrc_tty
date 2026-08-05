@@ -15,11 +15,11 @@ pub fn build(b: *std.Build) void {
         .root_module = root_module,
     });
 
-    exe.linkLibC();
-    exe.linkSystemLibrary("dbus-1");
+    exe.root_module.link_libc = true;
+    exe.root_module.linkSystemLibrary("dbus-1", .{});
 
     var code: u8 = undefined;
-    const dbus_cflags = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", "dbus-1" }, &code, .Inherit) catch |err| {
+    const dbus_cflags = b.runAllowFail(&.{ "pkg-config", "--cflags-only-I", "dbus-1" }, &code, .inherit) catch |err| {
         std.debug.print("failed to query pkg-config for dbus-1 ({s}); ensure pkg-config and libdbus-1 development headers are installed\n", .{@errorName(err)});
         @panic("pkg-config dbus-1");
     };
@@ -46,9 +46,22 @@ pub fn build(b: *std.Build) void {
         .root_module = test_module,
     });
 
+    const lyrics_test_module = b.createModule(.{
+        .root_source_file = b.path("src/lyrics.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const lyrics_tests = b.addTest(.{
+        .name = "lyrics_tests",
+        .root_module = lyrics_test_module,
+    });
+
     const run_tests = b.addRunArtifact(unit_tests);
+    const run_lyrics_tests = b.addRunArtifact(lyrics_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_lyrics_tests.step);
 }
 
 fn parsePkgConfigFlags(exe: *std.Build.Step.Compile, flags: []const u8) void {
@@ -91,7 +104,7 @@ fn addInclude(exe: *std.Build.Step.Compile, path: []const u8) void {
         return;
     }
     if (path.len == 0) return;
-    exe.addIncludePath(.{ .cwd_relative = exe.step.owner.dupe(path) });
+    exe.root_module.addIncludePath(.{ .cwd_relative = exe.step.owner.dupe(path) });
 }
 
 fn addMacro(exe: *std.Build.Step.Compile, macro: []const u8) void {

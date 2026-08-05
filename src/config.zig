@@ -13,9 +13,9 @@ pub const Config = struct {
     }
 };
 
-pub fn parse(allocator: std.mem.Allocator) !Config {
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+pub fn parse(allocator: std.mem.Allocator, arena: std.mem.Allocator, proc_args: std.process.Args) !Config {
+    // toSlice needs an arena, the result can point into several allocations
+    const args = try proc_args.toSlice(arena);
 
     var show_timestamp = false;
     var visible_lines: usize = 3;
@@ -25,7 +25,10 @@ pub fn parse(allocator: std.mem.Allocator) !Config {
     var player_override: ?[]u8 = null;
     errdefer if (player_override) |p| allocator.free(p);
 
-    var env_player = std.process.getEnvVarOwned(allocator, "LRC_TTY_PLAYER") catch null;
+    var env_player: ?[]u8 = if (std.c.getenv("LRC_TTY_PLAYER")) |v|
+        try allocator.dupe(u8, std.mem.span(v))
+    else
+        null;
     errdefer if (env_player) |p| allocator.free(p);
 
     var i: usize = 1;
